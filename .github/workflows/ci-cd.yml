@@ -1,0 +1,308 @@
+name: Comprehensive Forge CI/CD
+
+on:
+  push:
+    branches: [main, develop, staging]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  deployments: write
+
+env:
+  NODE_VERSION: "24.x"
+
+jobs:
+  # ------------------------------------------------------------------
+  # Stage 0: Pre-flight Checks (Security & Validation)
+  # ------------------------------------------------------------------
+  validation:
+    name: 0. Manifest & Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install Dependencies
+        run: npm ci
+      - name: Dependency Security Scan
+        run: npm audit --audit-level=critical
+
+  # ------------------------------------------------------------------
+  # Stage 1: Quality Assurance (Unit Tests & Linting)
+  # ------------------------------------------------------------------
+  qa:
+    name: 1. QA (Lint & Unit Tests)
+    needs: validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install Dependencies
+        run: npm ci
+      - name: Lint Code
+        run: npm run lint --if-present || npx eslint . --ext .js,.jsx,.ts,.tsx
+      - name: Run Unit Tests with Coverage
+        run: npm test -- --coverage || npm run test:unit --if-present || npx jest --coverage
+      - name: Upload Coverage Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-reports
+          path: coverage/
+          retention-days: 30
+      - name: Coverage Summary
+        if: always()
+        run: |
+          echo "## Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          if [ -f coverage/coverage-summary.json ]; then
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat coverage/coverage-summary.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ------------------------------------------------------------------
+  # Stage 2: Development Deployment
+  # ------------------------------------------------------------------
+  deploy-dev:
+    name: 2. Deploy Dev
+    needs: qa
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment:
+      name: development
+      url: ${{ vars.DEV_SITE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install Forge config
+        run: |
+          npm install -g @forge/cli@latest
+          npm ci
+      - name: Build
+        run: npm run build --if-present
+      - name: Authenticate
+        run: |
+          forge settings set usage-analytics false
+        env:
+          FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+          FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      - name: Deploy to Development
+        run: forge deploy -e development --non-interactive
+        env:
+          FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+          FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      - name: Promote to Staging
+        if: success()
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git fetch origin staging
+          # clean the workspace and force checkout to avoid conflicts with build artifacts
+          git clean -fd
+          git checkout -f staging
+          git merge develop --allow-unrelated-histories -X theirs -m "chore(release): Promote Development to Staging"
+          git push origin staging
+
+  # ------------------------------------------------------------------
+  # Stage 3: Staging Deployment
+  # ------------------------------------------------------------------
+  deploy-staging:
+    name: 3. Deploy Staging
+    needs: qa
+    if: github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_SITE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install Forge
+        run: |
+          npm install -g @forge/cli@latest
+          npm ci
+      - name: Build
+        run: npm run build --if-present
+      - name: Authenticate
+        run: forge settings set usage-analytics false
+        env:
+          FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+          FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      - name: Deploy to Staging
+        run: forge deploy -e staging --non-interactive
+        env:
+          FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+          FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      - name: Promote to Production
+        if: success()
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          # clean the workspace and force checkout
+          git clean -fd
+          git checkout -f main
+          git merge staging --allow-unrelated-histories -X theirs -m "chore(release): Promote Staging to Production"
+          git push origin main
+
+  # ------------------------------------------------------------------
+  # Stage 4: Versioning
+  # ------------------------------------------------------------------
+  versioning:
+    name: 4. Semantic Versioning
+    needs: [qa]
+    # Only run if coming from main
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.tag_version.outputs.new_tag }}
+      changelog: ${{ steps.tag_version.outputs.changelog }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bump version and push tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+
+  # ------------------------------------------------------------------
+  # Stage 5: Production Deployment
+  # ------------------------------------------------------------------
+  deploy-production:
+    name: 5. Deploy Production
+    needs: versioning
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PROD_SITE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.versioning.outputs.new_tag }} # Deploy the specific tag
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install Forge
+        run: |
+          npm install -g @forge/cli@latest
+          npm ci
+      - name: Build
+        run: npm run build --if-present
+      - name: Authenticate
+        run: forge settings set usage-analytics false
+        env:
+          FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+          FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      - name: Deploy to Production
+        id: prod-deploy
+        run: forge deploy -e production --non-interactive
+        env:
+          FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+          FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+
+  # ------------------------------------------------------------------
+  # Rollback Capability
+  # ------------------------------------------------------------------
+  rollback:
+    name: 🚨 Rollback Production
+    needs: deploy-production
+    if: failure()
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+      - name: Install Forge
+        run: npm install -g @forge/cli@latest
+      - name: Find Previous Tag
+        id: prev_tag
+        run: |
+          # Get list of tags sorted by date, take the 2nd most recent
+          PREV_TAG=$(git tag --sort=-creatordate | sed -n '2p')
+          echo "previous_tag=$PREV_TAG" >> $GITHUB_OUTPUT
+          echo "Rolling back to: $PREV_TAG"
+      - name: Checkout Previous Tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.prev_tag.outputs.previous_tag }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build --if-present
+      - name: Deploy Previous Version
+        run: |
+          if [ -z "${{ steps.prev_tag.outputs.previous_tag }}" ]; then
+            echo "No previous tag found to rollback to."
+            exit 1
+          fi
+          forge settings set usage-analytics false
+          echo "Deploying ${{ steps.prev_tag.outputs.previous_tag }} to production..."
+          forge deploy -e production --non-interactive
+        env:
+          FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+          FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      - name: Notify Rollback
+        if: always()
+        run: |
+          echo "## 🚨 Automatic Rollback Executed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Reason:** Production deployment failed" >> $GITHUB_STEP_SUMMARY
+          echo "**Rolled back to:** \`${{ steps.prev_tag.outputs.previous_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Please investigate the deployment failure and address issues before redeploying." >> $GITHUB_STEP_SUMMARY
+          echo "::error title=Rollback Executed::Deployment failed. Rolled back to ${{ steps.prev_tag.outputs.previous_tag }}"
+
+  # ------------------------------------------------------------------
+  # Release Creation & Notifications
+  # ------------------------------------------------------------------
+  release:
+    name: 6. Create Release
+    needs: [deploy-production, versioning]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ needs.versioning.outputs.new_tag }}
+          name: Release ${{ needs.versioning.outputs.new_tag }}
+          body: ${{ needs.versioning.outputs.changelog }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Deployment Notification
+        if: success()
+        run: |
+          echo "::notice title=Deployment::Successfully deployed ${{ needs.versioning.outputs.new_tag }} to Production"
