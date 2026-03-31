@@ -1,4 +1,3 @@
-import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 
 const MAX_DEPTH = 1;
@@ -86,49 +85,44 @@ async function getLinkedIssueIds(issueKey, linkType = null, depth = 1, visited =
   return linkedIds;
 }
 
-const resolver = new Resolver();
+export const handler = async (req) => {
+  console.log("--- New JQL Search Executed ---");
+  console.log("Raw JQL Handler Payload:", JSON.stringify(req));
 
-/**
- * Resolver function mapped to the 'linkedIssuesOf' capability.
- */
-resolver.define('linkedIssuesOf', async (req) => {
-  // Extract arguments from Forge's native JQL function payload format, or standard resolver payloads.
-  const clauseArguments = req.payload?.clause?.arguments;
+  // Extract arguments from Forge's native JQL function payload format
+  const clauseArguments = req?.clause?.arguments || req?.arguments || [];
   
-  // A robust attempt to pull the issueKey and linkType no matter how they're nested.
-  let issueKey;
-  let linkType;
+  const issueKey = clauseArguments[0];
+  const linkType = clauseArguments[1] || null;
 
-  if (Array.isArray(clauseArguments)) {
-    issueKey = clauseArguments[0];
-    linkType = clauseArguments[1];
-  } else if (Array.isArray(req.payload?.arguments)) {
-    issueKey = req.payload.arguments[0];
-    linkType = req.payload.arguments[1];
-  } else if (Array.isArray(req.payload)) {
-    issueKey = req.payload[0];
-    linkType = req.payload[1];
-  } else if (req.payload?.issueKey) {
-    // Custom UI / external app invocation fallback
-    issueKey = req.payload.issueKey;
-    linkType = req.payload.linkType;
-  } else {
-    // Other contexts
-    issueKey = req?.context?.extension?.arguments?.[0];
-    linkType = req?.context?.extension?.arguments?.[1];
-  }
+  console.log(`Extracted Arguments -> issueKey: ${issueKey}, linkType: ${linkType}`);
 
   if (!issueKey) {
+    console.error("Error: issueKey was not provided. JQL function requires it.");
     throw new Error('issueKey was not provided. This argument is required to evaluate linked issues.');
   }
 
   // Set maintains visited nodes to prevent cycles in cyclic graphs
   const visited = new Set();
+  console.log(`Fetching linked issues for ${issueKey}...`);
   const linkedIds = await getLinkedIssueIds(issueKey, linkType, 1, visited);
 
-  return {
-    issues: Array.from(linkedIds)
-  };
-});
+  console.log(`Found ${linkedIds.size} linked issue(s).`);
 
-export const handler = resolver.getDefinitions();
+  if (linkedIds.size === 0) {
+    console.log("Returning empty fallback JQL: issueKey = empty");
+    console.log("-------------------------------");
+    return {
+      jql: "issueKey = empty"
+    };
+  }
+
+  const idList = Array.from(linkedIds).join(',');
+  const resultingJql = `id in (${idList})`;
+  console.log(`Returning JQL fragment: ${resultingJql}`);
+  console.log("-------------------------------");
+
+  return {
+    jql: resultingJql
+  };
+};
