@@ -9,6 +9,8 @@ modules:
           required: false
       types:
         - issue
+        - string
+        - text
       operators:
         - in
         - not in
