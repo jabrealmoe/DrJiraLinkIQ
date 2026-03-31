@@ -1,0 +1,29 @@
+modules:
+  jira:jqlFunction:
+    - key: drjiralinkiq-linkedissuesof-function
+      name: linkedIssuesOf
+      arguments:
+        - name: issueKey
+          required: true
+        - name: linkType
+          required: false
+      types:
+        - issue
+      operators:
+        - in
+        - not in
+      function: functionKey
+  function:
+    - key: functionKey
+      handler: index.handler
+
+permissions:
+  scopes:
+    - read:jira-work
+
+app:
+  runtime:
+    name: nodejs24.x
+    memoryMB: 256
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/ab642f08-1f3c-44d6-ae37-42b4b09518e5
