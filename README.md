@@ -1,5 +1,7 @@
 # DrJiraLinkIQ
 
+![DrJiraLinkIQ Wizard](assets/wizard.png)
+
 A Jira Cloud app built with Atlassian Forge to provide intelligent issue linking via a custom JQL function.
 
 ## Local Dev Setup
@@ -71,3 +73,19 @@ The CI/CD pipelines require the following Secrets to automate the Forge CLI inte
 - `FORGE_DEV_SITE`: Site URL for development installs (e.g., `jabrealmoe.atlassian.net`).
 - `FORGE_STAGING_SITE`: Site URL for staging installs.
 - `FORGE_PROD_SITE`: Site URL for production installs.
+
+## Usage: ScriptRunner-like JQL in Jira Cloud
+
+This app provides a custom Forge JQL function that allows you to easily find linked issues using legacy ScriptRunner syntax. By creating a dummy `issueFunction` custom field in Jira Cloud, your existing saved filters can seamlessly transition from Jira Data Center.
+
+### Examples
+
+**Find all issues linked to a specific issue:**
+```jql
+issueFunction in linkedIssuesOf("PROJECT-123")
+```
+
+**Find issues linked to a specific issue by a specific link type (e.g., "blocks"):**
+```jql
+issueFunction in linkedIssuesOf("PROJECT-123", "blocks")
+```
