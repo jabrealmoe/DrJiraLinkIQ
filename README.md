@@ -89,3 +89,16 @@ issueFunction in linkedIssuesOf("PROJECT-123")
 ```jql
 issueFunction in linkedIssuesOf("PROJECT-123", "blocks")
 ```
+
+## Roadmap & TODO (Upcoming ScriptRunner JQL Replacements)
+
+The primary goal of this project is to fully supplement and replace legacy ScriptRunner JQL functions for Jira Cloud. Here is a working plan for additional functions to be supported:
+
+- [ ] **`linkedIssuesOf`**: Relationships (Respects link type direction)
+- [ ] **`subtasksOf`**: Hierarchy (Recursive-capable)
+- [ ] **`parentsOf`**: Hierarchy (Inverse of `subtasksOf`)
+- [ ] **`epicsOf` / `storiesOf`**: Hierarchy (Epic-link aware)
+- [ ] **`issueFieldMatch`**: Field matching (Cross-project field lookups)
+- [ ] **`membersOf`**: Users/Groups (Group-based assignee filter)
+- [ ] **`projectsWhereUserHasRole`**: Project/User (Role-scoped project filter)
+- [ ] **`componentsLeadByUser`**: Components (Lead-based component scoping)
