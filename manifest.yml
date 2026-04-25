@@ -15,9 +15,26 @@ modules:
         - in
         - not in
       function: functionKey
+    - key: drjiralinkiq-linkedissuesof-recursive-function
+      name: linkedIssuesOfRecursive
+      arguments:
+        - name: issueKey
+          required: true
+        - name: linkType
+          required: false
+      types:
+        - issue
+        - text
+        - label
+      operators:
+        - in
+        - not in
+      function: recursiveFunctionKey
   function:
     - key: functionKey
       handler: index.handler
+    - key: recursiveFunctionKey
+      handler: index.recursiveHandler
 
 permissions:
   scopes:
